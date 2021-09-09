@@ -1,0 +1,140 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>video</title>
+    <!-- Video.js -->
+    <link href="https://unpkg.com/video.js/dist/video-js.css" rel="stylesheet" />
+    <script src="https://unpkg.com/video.js/dist/video.min.js"></script>
+    <script src="https://unpkg.com/flv.js/dist/flv.min.js"></script>
+    <script src="https://unpkg.com/videojs-flvjs/dist/videojs-flvjs.min.js"></script>
+  </head>
+
+  <body>
+    <div>
+      <video id="videoElement" class="video-js vjs-default-skin vjs-big-play-centered" width="1400" height="600"></video>
+    </div>
+  </body>
+</html>
+<script>
+  //KMPlayer: flv/rtmp/hls都可以,rtsp只有声音
+  //flv+flvjs:只有flv可以,其他都不可以
+  //var flvUrl = "http://47.101.195.206:8089/live?port=1935&app=live&stream=livestream";
+  var flvUrl = 'http://47.101.195.206:8888/live/34020000001320000001@34020000001320000001.flv';
+  //var flvUrl = "http://47.101.195.206:8888/live/test.flv";
+  // var flvUrl = "http://47.101.195.206:8089/source.flv";
+  // var flvUrl = 'http://demo.easygbs.com:10001/hls/34020000001320000011_34020000001310000003_0200000003/playlist.m3u8';
+  //rtsp://demo.easygbs.com:5244/live/34020000001320000011_34020000001310000003_0200000003
+  var videoDOM = (videoElement = document.getElementById('videoElement'));
+  let videoFlvOptions = {
+    techOrder: ['html5', 'flvjs'],
+    flvjs: {
+      mediaDataSource: {
+        isLive: false,
+        cors: true,
+        withCredentials: false,
+        enableWorker: true, //多线程运行flv.js提升解析速度可以优化延迟
+        enableStashBuffer: false, //关闭音视频服务器的I桢缓存可以优化延迟，坏处是用户看到直播首屏的时间变大。
+        stashInitialSize: 128, // 减少首桢显示等待时长
+      },
+    },
+    sources: [
+      {
+        src: flvUrl,
+        //type: 'video/mp4'
+        type: 'video/x-flv',
+      },
+    ],
+    controls: true,
+    preload: 'none',
+  };
+
+  var videoFlvPlayer = videojs(videoDOM, videoFlvOptions, function onPlayerReady() {
+    console.log('player ready');
+
+    videoFlvPlayer.on('error', (err) => {
+      console.log('first source load fail');
+
+      videoFlvPlayer.src({
+        src: flvUrl,
+        type: 'video/x-flv',
+      });
+
+      videoFlvPlayer.ready(function () {
+        console.log('player ready');
+        videoFlvPlayer.load();
+        videoFlvPlayer.play();
+      });
+    });
+  });
+  //优化缓存义减少延迟的第一种方式：timeupdate事件里处理
+  videoFlvPlayer.on('timeupdate', function () {
+    //console.log("正在播放------"+JSON.stringify(videoFlvPlayer.buffered()));
+    console.log('正在播放------' + videoFlvPlayer.buffered().toString());
+    // 计算表最新推流的时间和现在播放器播放推流的时间
+    let endtime = videoFlvPlayer.buffered().end(0);
+    let differTime = endtime - videoFlvPlayer.currentTime();
+
+    //console.log(differTime);
+    // 差值小于1.5s时根据1倍速进行播放
+    if (differTime < 1.5) {
+      videoFlvPlayer.playbackRate(1);
+    }
+    // 差值大于1.5s小于10s根据1.2倍速进行播放
+    if (differTime < 10 && differTime > 1.5) {
+      videoFlvPlayer.playbackRate(4);
+    }
+
+    //console.log(videoFlvPlayer.buffered);
+    // 差值大于10s时进行重新加载直播流(浏览器后台运行时,相当于视频暂停,浏览器恢复前台,会在原来的时间处继续播放,这时需要跳过)
+    if (differTime > 10) {
+      //console.log("重新刷新流!!");
+      //videoFlvPlayer.playbackRate(10);	//超过10,依赖倍速播放效果不佳，要改为重新加载流
+
+      //TODO:跳过过时太长的视频，直接到最新的视频
+      //videoFlvPlayer.buffered()是个TimeRanges对象
+      //videoDOM.currentTime = endtime;		//没起作用
+      //videoDOM.currentTime(endtime);	//VIDEOJS: ERROR: TypeError: videoDOM.currentTime is not a function
+      //videoFlvPlayer.currentTime = endtime;	//VIDEOJS: ERROR: TypeError: this.player_.currentTime is not a function
+      videoFlvPlayer.currentTime(endtime); //会刷新几十秒
+      //videoDOM.currentTime = 100*(videoFlvPlayer.buffered().end(0))/videoDOM.duration;
+
+      //videoFlvPlayer.detachMediaElement();
+      //videoFlvPlayer.attachMediaElement(videoDOM);
+      //videoFlvPlayer.load(); //加载
+      //videoDOM.play();
+
+      // 注意这里重新加载video是自己封装的方法，需要销毁video并重新创建video
+      //$scope.videoPlay({liveUrl: videoFlvOptions.sources[0].src})		//TODO
+      //TODO:test
+      //videoDOM.dispose();		//VIDEOJS: ERROR: TypeError: Cannot read property 'dispose' of undefined
+      //var videoDOM = document.getElementById("videoElement");
+      //videoDOM.innerHTML = "<video id='videoElement' class='video-js vjs-default-skin vjs-big-play-centered'  width='1400' height='600'> </video>";
+      //可以重新播放，但又会重新初始化--耗时
+      //delete videoFlvPlayer;
+      //videoFlvPlayer = videojs(videoDOM, videoFlvOptions, function onPlayerReady() {});
+      //videoFlvPlayer.load();
+      //videoFlvPlayer.play();
+    }
+  });
+  //优化缓存义减少延迟的第二种方式：定时检查
+  // 两秒检测一次当前播放进度和实时进度得时间差
+  // 超过1.5s要将【当前播放时间】改为【实时进度时间】
+  setInterval(() => {
+    return;
+    //console.log("setInterval videoDOM.buffered.length:="+videoDOM.buffered.length);		//==0
+    //console.log("setInterval videoFlvPlayer.buffered.length:="+videoFlvPlayer.buffered().length);		//==1
+    //if (!videoDOM.buffered.length) {
+    if (!videoFlvPlayer.buffered().length) {
+      return;
+    }
+
+    let end = videoFlvPlayer.buffered().end(0);
+    let diff = end - videoFlvPlayer.currentTime();
+    //console.log("setInterval end:="+end + " diff：="+diff);
+    if (diff >= 3) {
+      //console.log("re-update-stream!!");
+      videoFlvPlayer.currentTime(end); //会刷新十来秒,因为每隔两秒刷新一次，所以累计暂停时间不长，所以刷新比较快一点
+      //videoDOM.currentTime = end;		////没起作用
+    }
+  }, 2000);
+</script>
